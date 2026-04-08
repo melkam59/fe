@@ -95,6 +95,17 @@ export type ChatUiCard =
   | ServiceCatalogCard
   | ServiceRequestConfirmationCard
 
+export type FrontendChatUi = {
+  kind: ChatUiKind
+  cards: ChatUiCard[]
+  handover: AgentRespondResponse["handover"] | null
+  errors: AgentRespondResponse["errors"]
+  debug: {
+    requestId: string | null
+    traceId: string | null
+  }
+}
+
 export type FrontendChatMessageResponse = {
   threadId: string
   message: {
@@ -102,10 +113,7 @@ export type FrontendChatMessageResponse = {
     role: "assistant"
     content: string
   }
-  ui: {
-    kind: ChatUiKind
-    cards: ChatUiCard[]
-  }
+  ui: FrontendChatUi
   bookingContext: {
     bookingId: string | null
     roomId: string | null
@@ -122,9 +130,11 @@ export type FrontendChatMessageResponse = {
       primaryAgent: string | null
       confidence: number | null
     }
+    requestId: string | null
+    traceId: string | null
     responseType: string
     handover: AgentRespondResponse["handover"] | null
-    errors: string[]
+    errors: AgentRespondResponse["errors"]
   }
   execution: {
     executed: boolean
@@ -318,7 +328,7 @@ export function inferUiKind(response: AgentRespondResponse): ChatUiKind {
   }
 
   const roomOptionsCard = extractRoomOptionsCard(
-    response.assistant_message.content,
+    response.assistant_message?.content ?? "",
     response.proposals
   )
 
@@ -331,7 +341,7 @@ export function inferUiKind(response: AgentRespondResponse): ChatUiKind {
 
 export function buildUiCards(response: AgentRespondResponse): ChatUiCard[] {
   const roomOptionsCard = extractRoomOptionsCard(
-    response.assistant_message.content,
+    response.assistant_message?.content ?? "",
     response.proposals
   )
 
@@ -342,20 +352,37 @@ export function buildFrontendChatResponse(args: {
   threadId: string
   bookingContext: FrontendChatMessageRequest["bookingContext"]
   agentResponse: AgentRespondResponse
+  requestId?: string | null
+  traceId?: string | null
 }): FrontendChatMessageResponse {
-  const { threadId, bookingContext, agentResponse } = args
+  const {
+    threadId,
+    bookingContext,
+    agentResponse,
+    requestId = null,
+    traceId = null,
+  } = args
   const firstProposal = agentResponse.proposals[0]
+  const content =
+    agentResponse.assistant_message?.content?.trim() ||
+    fallbackAgentMessage(agentResponse.response_type)
 
   return {
     threadId,
     message: {
       id: `${threadId}-${crypto.randomUUID()}`,
       role: "assistant",
-      content: agentResponse.assistant_message.content,
+      content,
     },
     ui: {
       kind: inferUiKind(agentResponse),
       cards: buildUiCards(agentResponse),
+      handover: agentResponse.handover ?? null,
+      errors: agentResponse.errors,
+      debug: {
+        requestId: agentResponse.request_id ?? requestId,
+        traceId,
+      },
     },
     bookingContext: {
       bookingId: bookingContext?.bookingId ?? null,
@@ -383,6 +410,8 @@ export function buildFrontendChatResponse(args: {
         primaryAgent: agentResponse.routing?.primary_agent ?? null,
         confidence: agentResponse.routing?.confidence ?? null,
       },
+      requestId: agentResponse.request_id ?? requestId,
+      traceId,
       responseType: agentResponse.response_type,
       handover: agentResponse.handover ?? null,
       errors: agentResponse.errors,
@@ -401,6 +430,8 @@ export function buildClarificationResponse(args: {
   content: string
   cards?: ChatUiCard[]
   uiKind?: Extract<ChatUiKind, "clarification" | "branch_options">
+  requestId?: string | null
+  traceId?: string | null
 }): FrontendChatMessageResponse {
   const {
     threadId,
@@ -408,6 +439,8 @@ export function buildClarificationResponse(args: {
     content,
     cards = [],
     uiKind = "clarification",
+    requestId = null,
+    traceId = null,
   } = args
 
   return {
@@ -420,6 +453,12 @@ export function buildClarificationResponse(args: {
     ui: {
       kind: uiKind,
       cards,
+      handover: null,
+      errors: [],
+      debug: {
+        requestId,
+        traceId,
+      },
     },
     bookingContext: {
       bookingId: bookingContext?.bookingId ?? null,
@@ -437,6 +476,8 @@ export function buildClarificationResponse(args: {
         primaryAgent: null,
         confidence: null,
       },
+      requestId,
+      traceId,
       responseType: "clarification_required",
       handover: null,
       errors: [],
@@ -447,4 +488,16 @@ export function buildClarificationResponse(args: {
       result: null,
     },
   }
+}
+
+function fallbackAgentMessage(responseType: string) {
+  if (responseType === "handover_required") {
+    return "A staff member should continue this request."
+  }
+
+  if (responseType === "clarification_required") {
+    return "I need one more detail to continue."
+  }
+
+  return "I'm ready to help with the next step."
 }

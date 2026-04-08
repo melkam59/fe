@@ -1,8 +1,24 @@
 import { z } from "zod"
 
+function readEnvValue(...keys: string[]) {
+  for (const key of keys) {
+    const value = process.env[key]?.trim()
+
+    if (value) {
+      return value.replace(/\/+$/, "")
+    }
+  }
+
+  return null
+}
+
 export const BACKEND_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  process.env.NEXT_PUBLIC_AUTH_BASE_URL ??
+  readEnvValue(
+    "BACKEND_BASE_URL",
+    "NEXT_PUBLIC_BACKEND_BASE_URL",
+    "NEXT_PUBLIC_API_BASE_URL",
+    "NEXT_PUBLIC_AUTH_BASE_URL"
+  ) ??
   "https://better-expriance-production.up.railway.app"
 
 export const portalOptions = [

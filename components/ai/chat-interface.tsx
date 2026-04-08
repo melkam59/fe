@@ -65,6 +65,15 @@ const initialMessages: ChatEntry[] = [
   },
 ]
 
+function createEmptyBookingContext(): BookingContextState {
+  return {
+    bookingId: null,
+    roomId: null,
+    resortId: null,
+    status: null,
+  }
+}
+
 type ChatErrorState = {
   message: string
   prompt: string
@@ -283,12 +292,9 @@ function ChatPanel({
   const [messages, setMessages] = useState<ChatEntry[]>(initialMessages)
   const [draft, setDraft] = useState("")
   const [threadId, setThreadId] = useState<string | null>(null)
-  const [bookingContext, setBookingContext] = useState<BookingContextState>({
-    bookingId: null,
-    roomId: null,
-    resortId: null,
-    status: null,
-  })
+  const [bookingContext, setBookingContext] = useState<BookingContextState>(
+    createEmptyBookingContext()
+  )
   const [formError, setFormError] = useState<string | null>(null)
   const [chatError, setChatError] = useState<ChatErrorState>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -304,14 +310,7 @@ function ChatPanel({
 
     setThreadId(storedThreadId)
     setMessages(storedMessages?.length ? storedMessages : initialMessages)
-    setBookingContext(
-      storedBookingContext ?? {
-        bookingId: null,
-        roomId: null,
-        resortId: null,
-        status: null,
-      }
-    )
+    setBookingContext(storedBookingContext ?? createEmptyBookingContext())
 
     window.localStorage.setItem(STORAGE_THREAD_KEY, storedThreadId)
   }, [])
@@ -341,6 +340,26 @@ function ChatPanel({
       block: "end",
     })
   }, [messages, isSubmitting])
+
+  function resetConversation() {
+    const nextThreadId = `thread_${crypto.randomUUID()}`
+
+    setThreadId(nextThreadId)
+    setMessages(initialMessages)
+    setBookingContext(createEmptyBookingContext())
+    setDraft("")
+    setFormError(null)
+    setChatError(null)
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STORAGE_THREAD_KEY, nextThreadId)
+      window.localStorage.setItem(STORAGE_MESSAGES_KEY, JSON.stringify(initialMessages))
+      window.localStorage.setItem(
+        STORAGE_BOOKING_CONTEXT_KEY,
+        JSON.stringify(createEmptyBookingContext())
+      )
+    }
+  }
 
   async function submitPrompt(prompt: string) {
     const trimmed = prompt.trim()
@@ -437,6 +456,15 @@ function ChatPanel({
             <span className="rounded-full border border-stone-200 bg-white/70 px-3 py-1 text-[11px] font-medium text-stone-600">
               Backend connected
             </span>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-full border-stone-300 bg-white"
+              onClick={resetConversation}
+              disabled={isSubmitting}
+            >
+              New chat
+            </Button>
             {variant === "sheet" ? (
               <Button
                 type="button"
@@ -518,9 +546,32 @@ function ChatPanel({
                     Human handover recommended
                   </div>
                   <p className="mt-2">
-                    The concierge thinks this request should be routed to a team
-                    member for follow-up.
+                    {message.ui?.handover?.summary ??
+                      "The concierge thinks this request should be routed to a team member for follow-up."}
                   </p>
+                  {message.ui?.handover?.reason ? (
+                    <p className="mt-2 text-xs font-medium uppercase tracking-[0.16em] text-amber-800/80">
+                      Reason: {message.ui?.handover?.reason.replace(/_/g, " ")}
+                    </p>
+                  ) : null}
+                  {message.ui?.errors?.[0]?.message ? (
+                    <p className="mt-2 text-xs text-amber-900/85">
+                      Backend detail: {message.ui?.errors?.[0]?.message}
+                    </p>
+                  ) : null}
+                  {message.ui?.debug.requestId || message.ui?.debug.traceId ? (
+                    <p className="mt-3 font-mono text-[11px] text-amber-900/70">
+                      {message.ui?.debug.requestId
+                        ? `request ${message.ui?.debug.requestId}`
+                        : ""}
+                      {message.ui?.debug.requestId && message.ui?.debug.traceId
+                        ? " | "
+                        : ""}
+                      {message.ui?.debug.traceId
+                        ? `trace ${message.ui?.debug.traceId}`
+                        : ""}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>

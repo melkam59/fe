@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
+import { ZodError } from "zod"
 
 import { respondWithAgent } from "@/lib/agent-service"
+import { ApiError } from "@/lib/api/shared"
 import {
   isStandaloneBranchSelection,
   listAvailableBranches,
@@ -23,12 +25,13 @@ const allowedToolNames = [
 ] as const
 
 export async function POST(request: Request) {
+  const requestId = `chat_req_${crypto.randomUUID()}`
+  const traceId = `trace_${crypto.randomUUID()}`
+
   try {
     const payload = frontendChatMessageRequestSchema.parse(await request.json())
     const threadId = payload.threadId?.trim() || `thread_${crypto.randomUUID()}`
     const messageId = payload.message.id?.trim() || `msg_${crypto.randomUUID()}`
-    const requestId = `chat_req_${crypto.randomUUID()}`
-    const traceId = `trace_${crypto.randomUUID()}`
 
     const { normalizedContent, invalidDates } = normalizeDatesInMessage(
       payload.message.content
@@ -54,6 +57,8 @@ export async function POST(request: Request) {
           }: ${invalidDates.join(
             ", "
           )}. Please use a real calendar date like 2026-05-13 or 05/13/2026.`,
+          requestId,
+          traceId,
         })
       )
     }
@@ -77,6 +82,8 @@ export async function POST(request: Request) {
               })),
             },
           ],
+          requestId,
+          traceId,
         })
       )
     }
@@ -87,6 +94,8 @@ export async function POST(request: Request) {
           threadId,
           bookingContext,
           content: `Great, I’ve selected ${selectedBranch.name}. Please share your check-in date and how many nights you’d like to stay.`,
+          requestId,
+          traceId,
         })
       )
     }
@@ -110,6 +119,8 @@ export async function POST(request: Request) {
               })),
             },
           ],
+          requestId,
+          traceId,
         })
       )
     }
@@ -149,17 +160,29 @@ export async function POST(request: Request) {
         threadId,
         bookingContext,
         agentResponse,
+        requestId,
+        traceId,
       })
     )
   } catch (error) {
+    const status =
+      error instanceof ZodError
+        ? 400
+        : error instanceof ApiError
+          ? error.status
+          : 502
+
     return NextResponse.json(
       {
         message:
           error instanceof Error
             ? error.message
             : "We couldn't process the chat message right now.",
+        requestId,
+        traceId,
+        details: error instanceof ApiError ? error.payload : null,
       },
-      { status: 400 }
+      { status }
     )
   }
 }

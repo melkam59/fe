@@ -1,10 +1,23 @@
 import { z } from "zod"
 
-import { getErrorMessage, parseResponse } from "@/lib/api/shared"
+import {
+  ApiError,
+  createRequestHeaders,
+  getErrorMessage,
+  parseResponse,
+} from "@/lib/api/shared"
 
-export const AGENT_SERVICE_BASE_URL =
-  process.env.AGENT_SERVICE_BASE_URL?.trim() ||
-  "https://agentic-intelligence-systems-production.up.railway.app"
+function readAgentBaseUrl() {
+  return (
+    process.env.AGENT_BASE_URL?.trim() ||
+    process.env.INTERNAL_AGENT_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_AGENT_BASE_URL?.trim() ||
+    process.env.AGENT_SERVICE_BASE_URL?.trim() ||
+    "http://localhost:8000"
+  ).replace(/\/+$/, "")
+}
+
+export const AGENT_SERVICE_BASE_URL = readAgentBaseUrl()
 
 const actorSchema = z.object({
   actor_type: z.string(),
@@ -70,59 +83,115 @@ const agentRoutingSchema = z.object({
   confidence: z.number().nullable().optional(),
 })
 
-function normalizeAgentError(value: unknown) {
+export type AgentError = {
+  code: string | null
+  message: string
+  details: Record<string, unknown> | null
+}
+
+export type AgentHandover = {
+  required: boolean
+  reason: string | null
+  summary: string | null
+  recommended_queue: string | null
+  suggested_action: string | null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function normalizeAgentError(value: unknown): AgentError {
   if (typeof value === "string" && value.trim()) {
-    return value
+    return {
+      code: null,
+      message: value.trim(),
+      details: null,
+    }
   }
 
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return "Unknown agent error."
+  if (!isRecord(value)) {
+    return {
+      code: null,
+      message: "Unknown agent error.",
+      details: null,
+    }
   }
 
-  const candidate = value as {
-    message?: unknown
-    code?: unknown
-    path?: unknown
-    expected?: unknown
-    received?: unknown
-  }
+  const code =
+    typeof value.code === "string" && value.code.trim() ? value.code : null
 
-  if (typeof candidate.message === "string" && candidate.message.trim()) {
-    return candidate.message
+  if (typeof value.message === "string" && value.message.trim()) {
+    return {
+      code,
+      message: value.message,
+      details: value,
+    }
   }
 
   const parts = [
-    typeof candidate.code === "string" ? candidate.code : null,
-    Array.isArray(candidate.path) && candidate.path.length
-      ? `at ${candidate.path.join(".")}`
+    code,
+    Array.isArray(value.path) && value.path.length
+      ? `at ${value.path.join(".")}`
       : null,
-    typeof candidate.expected === "string"
-      ? `expected ${candidate.expected}`
+    typeof value.expected === "string"
+      ? `expected ${value.expected}`
       : null,
-    typeof candidate.received === "string"
-      ? `received ${candidate.received}`
+    typeof value.received === "string"
+      ? `received ${value.received}`
       : null,
   ].filter(Boolean)
 
-  return parts.length ? parts.join(" - ") : JSON.stringify(value)
+  return {
+    code,
+    message: parts.length ? parts.join(" - ") : JSON.stringify(value),
+    details: value,
+  }
 }
 
-const agentHandoverSchema = z
-  .object({
-    reason: z.string().optional(),
-    queue: z.string().optional(),
-    suggested_action: z.string().optional(),
-  })
-  .nullable()
-  .optional()
+function normalizeAgentHandover(value: unknown): AgentHandover | null {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const summary =
+    typeof value.summary === "string" && value.summary.trim()
+      ? value.summary
+      : typeof value.suggested_action === "string" && value.suggested_action.trim()
+        ? value.suggested_action
+        : null
+
+  return {
+    required: value.required !== false,
+    reason:
+      typeof value.reason === "string" && value.reason.trim()
+        ? value.reason
+        : null,
+    summary,
+    recommended_queue:
+      typeof value.recommended_queue === "string" &&
+      value.recommended_queue.trim()
+        ? value.recommended_queue
+        : typeof value.queue === "string" && value.queue.trim()
+          ? value.queue
+          : null,
+    suggested_action:
+      typeof value.suggested_action === "string" && value.suggested_action.trim()
+        ? value.suggested_action
+        : null,
+  }
+}
 
 export const agentRespondResponseSchema = z.object({
   request_id: z.string(),
   response_type: z.string(),
   intent: agentIntentSchema.optional(),
-  assistant_message: agentAssistantMessageSchema,
+  assistant_message: agentAssistantMessageSchema.nullable().optional(),
   proposals: z.array(agentProposalSchema).default([]),
-  handover: agentHandoverSchema,
+  handover: z
+    .unknown()
+    .optional()
+    .transform((value) => normalizeAgentHandover(value)),
   routing: agentRoutingSchema.optional(),
   errors: z.array(z.unknown()).default([]).transform((errors) => {
     return errors.map(normalizeAgentError)
@@ -141,17 +210,17 @@ async function agentRequest<T>(
   const response = await fetch(`${AGENT_SERVICE_BASE_URL}${path}`, {
     method: "POST",
     cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: createRequestHeaders(undefined, true),
     body: JSON.stringify(payload),
   })
 
   const parsedPayload = await parseResponse(response)
 
   if (!response.ok) {
-    throw new Error(
-      getErrorMessage(parsedPayload, "Agent service request failed.")
+    throw new ApiError(
+      response.status,
+      getErrorMessage(parsedPayload, "The concierge service is unavailable."),
+      parsedPayload
     )
   }
 
