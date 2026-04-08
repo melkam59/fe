@@ -8,16 +8,33 @@ import {
 } from "@/lib/api/shared"
 
 function readAgentBaseUrl() {
-  return (
+  const configuredBaseUrl = (
     process.env.AGENT_BASE_URL?.trim() ||
     process.env.INTERNAL_AGENT_BASE_URL?.trim() ||
     process.env.NEXT_PUBLIC_AGENT_BASE_URL?.trim() ||
-    process.env.AGENT_SERVICE_BASE_URL?.trim() ||
-    "http://localhost:8000"
-  ).replace(/\/+$/, "")
+    process.env.AGENT_SERVICE_BASE_URL?.trim()
+  )?.replace(/\/+$/, "")
+
+  if (configuredBaseUrl) {
+    return configuredBaseUrl
+  }
+
+  return process.env.NODE_ENV === "production"
+    ? null
+    : "http://localhost:8000"
 }
 
 export const AGENT_SERVICE_BASE_URL = readAgentBaseUrl()
+
+function requireAgentBaseUrl() {
+  if (AGENT_SERVICE_BASE_URL) {
+    return AGENT_SERVICE_BASE_URL
+  }
+
+  throw new Error(
+    "Missing frontend agent configuration. Set AGENT_BASE_URL, INTERNAL_AGENT_BASE_URL, NEXT_PUBLIC_AGENT_BASE_URL, or AGENT_SERVICE_BASE_URL to your deployed AIS URL."
+  )
+}
 
 const actorSchema = z.object({
   actor_type: z.string(),
@@ -207,7 +224,7 @@ async function agentRequest<T>(
   payload: unknown,
   schema: z.ZodType<T>
 ): Promise<T> {
-  const response = await fetch(`${AGENT_SERVICE_BASE_URL}${path}`, {
+  const response = await fetch(`${requireAgentBaseUrl()}${path}`, {
     method: "POST",
     cache: "no-store",
     headers: createRequestHeaders(undefined, true),
@@ -228,7 +245,7 @@ async function agentRequest<T>(
 }
 
 export async function getAgentHealth() {
-  const response = await fetch(`${AGENT_SERVICE_BASE_URL}/health`, {
+  const response = await fetch(`${requireAgentBaseUrl()}/health`, {
     method: "GET",
     cache: "no-store",
   })
